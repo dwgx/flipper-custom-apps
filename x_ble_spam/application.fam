@@ -1,0 +1,13 @@
+App(
+    appid="x_ble_spam",
+    name="X-BLE Spam",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="x_ble_spam_main",
+    stack_size=2 * 1024,
+    fap_category="Bluetooth",
+    fap_icon="x_ble_spam.png",
+    fap_icon_assets="icons",
+    fap_author="dwgx",
+    fap_version=(1, 1),
+    fap_description="BLE advertisement spammer with optional ESP32 boost",
+)
