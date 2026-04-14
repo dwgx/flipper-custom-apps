@@ -3,6 +3,7 @@
 #include <furi_hal.h>
 #include <furi_hal_serial.h>
 #include <furi_hal_serial_control.h>
+#include <expansion/expansion.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -12,12 +13,13 @@
 
 struct EspBoost {
     FuriHalSerialHandle* serial;
+    Expansion* expansion;
     bool connected;
     bool active;
 };
 
 // Dual-fire: send both Ghost ESP and Marauder commands.
-// The ESP32 executes whichever it understands, ignores the other.
+// The ESP32 executes whichever matches its firmware, ignores the other.
 
 static const char* ghost_start[] = {
     [EspBoostCmdApple] = "blespam -apple\n",
@@ -45,9 +47,23 @@ EspBoost* esp_boost_init(void) {
     EspBoost* boost = malloc(sizeof(EspBoost));
     memset(boost, 0, sizeof(EspBoost));
 
+    // MUST disable expansion module before acquiring UART
+    boost->expansion = furi_record_open(RECORD_EXPANSION);
+    expansion_disable(boost->expansion);
+
+    if(furi_hal_serial_control_is_busy(ESP_BOOST_UART_CH)) {
+        FURI_LOG_I(TAG, "UART busy, ESP boost disabled");
+        expansion_enable(boost->expansion);
+        furi_record_close(RECORD_EXPANSION);
+        free(boost);
+        return NULL;
+    }
+
     boost->serial = furi_hal_serial_control_acquire(ESP_BOOST_UART_CH);
     if(!boost->serial) {
-        FURI_LOG_I(TAG, "UART busy, ESP boost disabled");
+        FURI_LOG_I(TAG, "UART acquire failed");
+        expansion_enable(boost->expansion);
+        furi_record_close(RECORD_EXPANSION);
         free(boost);
         return NULL;
     }
@@ -65,6 +81,11 @@ void esp_boost_free(EspBoost* boost) {
         furi_hal_serial_deinit(boost->serial);
         furi_hal_serial_control_release(boost->serial);
     }
+    // Re-enable expansion module
+    if(boost->expansion) {
+        expansion_enable(boost->expansion);
+        furi_record_close(RECORD_EXPANSION);
+    }
     free(boost);
 }
 
@@ -81,7 +102,6 @@ void esp_boost_start(EspBoost* boost, EspBoostCmd cmd) {
         furi_delay_ms(50);
     }
 
-    // Fire both command formats — ESP32 responds to whichever matches its firmware
     FURI_LOG_I(TAG, "Dual-fire start: cmd=%d", cmd);
     esp_send(boost, ghost_start[cmd]);
     furi_delay_ms(20);
@@ -91,7 +111,6 @@ void esp_boost_start(EspBoost* boost, EspBoostCmd cmd) {
 
 void esp_boost_stop(EspBoost* boost) {
     if(!boost || !boost->connected) return;
-    // Ghost stop + Marauder stop
     esp_send(boost, "blespam -s\n");
     furi_delay_ms(20);
     esp_send(boost, "stopscan\n");

