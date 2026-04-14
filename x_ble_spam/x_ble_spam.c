@@ -118,7 +118,6 @@ typedef struct {
     bool broadcasting;
     bool ble_ok;
     bool esp_connected;
-    EspFirmwareType esp_fw;
 } BleSpamModel;
 
 typedef struct {
@@ -291,12 +290,8 @@ static void draw_cb(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
 
-    // Title with ESP32 status
-    const char* title = "BleSpam";
-    if(m->esp_connected && m->esp_fw == EspFirmwareGhost)
-        title = "BleSpam+Ghost";
-    else if(m->esp_connected && m->esp_fw == EspFirmwareMarauder)
-        title = "BleSpam+Marauder";
+    // Title
+    const char* title = m->esp_connected ? "BleSpam+ESP" : "BleSpam";
     canvas_draw_str_aligned(canvas, 64, 2, AlignCenter, AlignTop, title);
 
     // Device name
@@ -397,7 +392,6 @@ int32_t x_ble_spam_main(void* p) {
             m->broadcasting = false;
             m->ble_ok = false;
             m->esp_connected = esp_boost_is_connected(app->esp);
-            m->esp_fw = esp_boost_get_firmware(app->esp);
         },
         true);
 
